@@ -8,13 +8,10 @@
 (function () {
 	'use strict';
 
-	/**
-	 * Stretch all breakout sections to the full viewport width.
-	 *
-	 * Each section measures its own current position and shifts itself
-	 * left by exactly that amount. This makes the solution robust even
-	 * when multiple breakout sections appear directly after each other.
-	 */
+	function getViewportWidth() {
+		return document.documentElement.clientWidth || window.innerWidth;
+	}
+
 	function stretchBreakouts() {
 		const breakouts = document.querySelectorAll('.breakout-section');
 
@@ -22,13 +19,14 @@
 			return;
 		}
 
+		const viewportWidth = getViewportWidth();
+
 		breakouts.forEach((breakout) => {
-			// Reset first so the browser can calculate the natural position.
 			breakout.classList.remove('breakout-ready');
 
 			breakout.style.position = 'relative';
-			breakout.style.width = '100vw';
-			breakout.style.maxWidth = '100vw';
+			breakout.style.setProperty('width', viewportWidth + 'px', 'important');
+			breakout.style.setProperty('max-width', viewportWidth + 'px', 'important');
 			breakout.style.left = '0';
 			breakout.style.marginLeft = '0';
 			breakout.style.marginRight = '0';
@@ -36,8 +34,6 @@
 			breakout.style.zIndex = '1';
 		});
 
-		// Measure in the next frame after Firefox and other browsers
-		// have recalculated the layout.
 		window.requestAnimationFrame(() => {
 			breakouts.forEach((breakout) => {
 				const rect = breakout.getBoundingClientRect();
