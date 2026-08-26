@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Elementor Breakout Sections
  * Description: Bring back full-width breakout sections for Elementor Container layouts.
- * Version: 0.1.2
+ * Version: 0.1.3
  * Author: #dezemberundjuli
  * Author URI: https://dezemberundjuli.ch
  * License: MIT
