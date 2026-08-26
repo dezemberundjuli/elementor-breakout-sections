@@ -8,52 +8,123 @@
 (function () {
 	'use strict';
 
+	const styleProperties = [
+		'position',
+		'width',
+		'max-width',
+		'left',
+		'margin-left',
+		'margin-right',
+		'box-sizing',
+		'z-index',
+	];
+
 	let scheduled = false;
-	let isUpdating = false;
+	let observerStarted = false;
+	let editorFallbackStarted = false;
+
+	const originalInlineStyles = new WeakMap();
+	const processedElements = new Set();
 
 	function getViewportWidth() {
 		return document.documentElement.clientWidth || window.innerWidth;
 	}
 
+	function rememberOriginalInlineStyles(element) {
+		if (originalInlineStyles.has(element)) {
+			return;
+		}
+
+		const original = {};
+
+		styleProperties.forEach((property) => {
+			original[property] = element.style.getPropertyValue(property);
+		});
+
+		originalInlineStyles.set(element, original);
+	}
+
+	function restoreOriginalInlineStyles(element) {
+		const original = originalInlineStyles.get(element);
+
+		if (!original) {
+			return;
+		}
+
+		styleProperties.forEach((property) => {
+			if (original[property]) {
+				element.style.setProperty(property, original[property]);
+			} else {
+				element.style.removeProperty(property);
+			}
+		});
+
+		element.classList.remove('breakout-ready');
+		originalInlineStyles.delete(element);
+		processedElements.delete(element);
+	}
+
+	function stretchBreakout(element) {
+		if (!element.classList.contains('breakout-section')) {
+			return;
+		}
+
+		rememberOriginalInlineStyles(element);
+		processedElements.add(element);
+
+		const viewportWidth = getViewportWidth();
+
+		element.style.setProperty('position', 'relative');
+		element.style.setProperty('width', viewportWidth + 'px', 'important');
+		element.style.setProperty('max-width', viewportWidth + 'px', 'important');
+		element.style.setProperty('margin-left', '0');
+		element.style.setProperty('margin-right', '0');
+		element.style.setProperty('box-sizing', 'border-box');
+		element.style.setProperty('z-index', '1');
+
+		/**
+		 * Important:
+		 * Do not reset left to 0 on every run.
+		 *
+		 * The Elementor editor fallback may run repeatedly. Resetting left first
+		 * would cause visible flickering. Instead, calculate the natural offset
+		 * based on the current rendered position and current left value.
+		 */
+		const rect = element.getBoundingClientRect();
+		const currentLeft = parseFloat(window.getComputedStyle(element).left) || 0;
+		const naturalLeft = rect.left - currentLeft;
+		const targetLeft = -naturalLeft;
+
+		if (Math.abs(currentLeft - targetLeft) > 0.5) {
+			element.style.setProperty('left', targetLeft + 'px');
+		}
+
+		element.classList.add('breakout-ready');
+	}
+
+	function cleanupRemovedBreakouts() {
+		processedElements.forEach((element) => {
+			if (!document.documentElement.contains(element)) {
+				processedElements.delete(element);
+				return;
+			}
+
+			if (!element.classList.contains('breakout-section')) {
+				restoreOriginalInlineStyles(element);
+			}
+		});
+	}
+
 	function stretchBreakouts() {
+		cleanupRemovedBreakouts();
+
 		const breakouts = document.querySelectorAll('.breakout-section');
 
 		if (!breakouts.length) {
 			return;
 		}
 
-		const viewportWidth = getViewportWidth();
-
-		isUpdating = true;
-
-		breakouts.forEach((breakout) => {
-			breakout.style.position = 'relative';
-			breakout.style.setProperty('width', viewportWidth + 'px', 'important');
-			breakout.style.setProperty('max-width', viewportWidth + 'px', 'important');
-			breakout.style.marginLeft = '0';
-			breakout.style.marginRight = '0';
-			breakout.style.boxSizing = 'border-box';
-			breakout.style.zIndex = '1';
-
-			/**
-			 * Instead of resetting left to 0 first, calculate the natural
-			 * offset from the current rendered position and the current left value.
-			 * This avoids visible jumps during recalculation.
-			 */
-			const rect = breakout.getBoundingClientRect();
-			const currentLeft = parseFloat(
-				breakout.style.left || window.getComputedStyle(breakout).left
-			) || 0;
-
-			const naturalLeft = rect.left - currentLeft;
-
-			breakout.style.left = `-${naturalLeft}px`;
-			breakout.classList.add('breakout-ready');
-		});
-
-		window.requestAnimationFrame(() => {
-			isUpdating = false;
-		});
+		breakouts.forEach(stretchBreakout);
 	}
 
 	function scheduleStretchBreakouts() {
@@ -70,15 +141,13 @@
 	}
 
 	function observeBreakoutChanges() {
-		if (!document.body) {
+		if (observerStarted || !document.body) {
 			return;
 		}
 
-		const observer = new MutationObserver((mutations) => {
-			if (isUpdating) {
-				return;
-			}
+		observerStarted = true;
 
+		const observer = new MutationObserver((mutations) => {
 			for (const mutation of mutations) {
 				if (mutation.type === 'childList') {
 					scheduleStretchBreakouts();
@@ -92,6 +161,7 @@
 				) {
 					if (
 						mutation.target.classList.contains('breakout-section') ||
+						processedElements.has(mutation.target) ||
 						mutation.target.closest('.breakout-section')
 					) {
 						scheduleStretchBreakouts();
@@ -109,16 +179,63 @@
 		});
 	}
 
-	window.addEventListener('load', scheduleStretchBreakouts);
-	window.addEventListener('resize', scheduleStretchBreakouts);
+	function isElementorEditMode() {
+		if (
+			window.elementorFrontend &&
+			typeof window.elementorFrontend.isEditMode === 'function' &&
+			window.elementorFrontend.isEditMode()
+		) {
+			return true;
+		}
 
-	document.addEventListener('DOMContentLoaded', () => {
+		if (
+			document.body &&
+			document.body.classList.contains('elementor-editor-active')
+		) {
+			return true;
+		}
+
+		return false;
+	}
+
+	function startEditorFallback() {
+		if (editorFallbackStarted || !isElementorEditMode()) {
+			return;
+		}
+
+		editorFallbackStarted = true;
+
+		/**
+		 * Elementor editor fallback.
+		 *
+		 * Elementor does not always expose live CSS-class changes as predictable
+		 * DOM mutations inside the preview iframe. While editing, recalculate
+		 * periodically so newly added or removed breakout sections update without
+		 * a page reload.
+		 */
+		window.setInterval(scheduleStretchBreakouts, 500);
+	}
+
+	function initBreakouts() {
 		observeBreakoutChanges();
 		scheduleStretchBreakouts();
+		startEditorFallback();
+	}
+
+	window.addEventListener('load', initBreakouts);
+	window.addEventListener('resize', scheduleStretchBreakouts);
+
+	document.addEventListener('DOMContentLoaded', initBreakouts);
+
+	window.addEventListener('elementor/frontend/init', () => {
+		initBreakouts();
+		window.requestAnimationFrame(startEditorFallback);
 	});
 
 	if (document.readyState !== 'loading') {
-		observeBreakoutChanges();
-		scheduleStretchBreakouts();
+		initBreakouts();
+
+		window.setTimeout(startEditorFallback, 500);
+		window.setTimeout(startEditorFallback, 1500);
 	}
 })();
