@@ -23,6 +23,13 @@
 	pointer-events: auto;
 }
 
+/* Keep breakout sections visible while editing in Elementor */
+body.elementor-editor-active .breakout-section {
+	opacity: 1;
+	visibility: visible;
+	pointer-events: auto;
+}
+
 .breakout-section.e-con-boxed {
 	width: 100% !important;
 	max-width: none !important;
